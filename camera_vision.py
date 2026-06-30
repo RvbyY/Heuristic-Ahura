@@ -13,7 +13,7 @@ Requirements:
 - Camera (USB or CSI camera on Jetson)
 """
 
-import cv2
+import cv2  # type: ignore[import-not-found]
 import numpy as np
 import time
 from collections import deque

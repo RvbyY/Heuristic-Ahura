@@ -95,7 +95,7 @@ def main_loop(sensors, state, values, car_esc, car_servo, mlp_model=None):
         friction = agent.estimate_friction(sensors, mlp_model, state)
     else:
         friction = 1.0
-    lambda2_adjusted = agent.adjust_for_width(values.tau / (friction ** 2), track_width=1.5)
+    lambda2_adjusted = agent.adjust_for_width(values.tau / (friction ** 2), track_width=0.35)
     steer = agent.compute_steer(sensors.dist, values, sensors, estimated_turn)
     target_speed = agent.compute_target_speed(sensors.dist[1], estimated_turn, friction, values, lambda2_adjusted)
     target_speed = agent.apply_danger_zone_speed(target_speed, state, values)
