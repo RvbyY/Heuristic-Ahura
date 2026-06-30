@@ -36,9 +36,10 @@ class Servo:
 try:
     import Jetson.GPIO as GPIO
     GPIO_AVAILABLE = True
-except ImportError:
+except (ImportError, RuntimeError) as exc:
     GPIO_AVAILABLE = False
-    print("Warning: Jetson.GPIO not available. ESC control will not work.")
+    GPIO = None
+    print(f"Warning: Jetson.GPIO unavailable ({exc}). ESC control will not work.")
 
 class ESC:
     """ESC control via Jetson GPIO PWM"""
@@ -163,4 +164,3 @@ def create_simple_state():
         is_stuck=False,
         stuck_timer=0.0
     )
-

@@ -1,0 +1,8 @@
+numpy==1.13.3
+pyserial==3.5
+PyYAML==5.4.1
+Jetson.GPIO==2.1.6
+
+# OpenCV/cv2 is provided by JetPack on this Jetson system
+# (/usr/lib/python3.6/dist-packages/cv2). The PyPI opencv-python
+# aarch64 wheel requires a newer NumPy ABI and crashes on Cortex-A57.

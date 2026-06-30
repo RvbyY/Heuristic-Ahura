@@ -86,7 +86,7 @@ class heuristic_value:
         self.a_trap, self.b_trap, self.c_trap, self.d_trap = cfg['a_trap'], cfg['b_trap'], cfg['c_trap'], cfg['d_trap']
         self.e1, self.e2 = cfg['e1'], cfg['e2']
         self.lambda1, self.lambda2 = cfg['lambda1'], cfg['lambda2']
-        self.tau, self.abs_slip, self.abs_range, self.abs_min_speed = cfg['abs_slip'], cfg['abs_range'], cfg['abs_min_speed']
+        self.tau, self.abs_slip, self.abs_range, self.abs_min_speed = cfg['tau'], cfg['abs_slip'], cfg['abs_range'], cfg['abs_min_speed']
         self.asr_slip, self.asr_range, self.asr_max_speed = cfg['asr_slip'], cfg['asr_range'], cfg['asr_max_speed']
         self.omega1, self.omega2, self.omega3, self.omega4, self.omega5 = cfg['omega1'], cfg['omega2'], cfg['omega3'], cfg['omega4'], cfg['omega5']
         self.danger_speed_factor, self.min_speed_factor, self.danger_look_ahead = cfg['danger_speed_factor'], cfg['min_speed_factor'], cfg['danger_look_ahead']
