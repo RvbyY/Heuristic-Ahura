@@ -64,10 +64,10 @@ class CameraVision:
                 "le device n'est pas déjà utilisé par un autre programme."
             ) from exc
 
-        self.queue_rgb = self.device.getOutputQueue(name="rgb", maxSize=4, blocking=False)
+        self.queue_rgb = self.device.getOutputQueue(name="rgb", maxSize=1, blocking=False)
         self.cap = None  # pas de VideoCapture en mode OAK
 
-    def __init__(self, camera_id=0, width=640, height=480, fps=30, use_oak=True):
+    def __init__(self, camera_id=0, width=640, height=480, fps=15, use_oak=True):
         """
         Initialize camera vision system.
 
@@ -86,6 +86,7 @@ class CameraVision:
         self.height = height
         self.fps = fps
         self.use_oak = use_oak
+        self.last_read_error = None
 
         if self.use_oak:
             self._init_oak_camera(width, height, fps)
@@ -348,14 +349,24 @@ class CameraVision:
             numpy.ndarray: BGR frame, or None if failed
         """
         if self.use_oak:
-            in_rgb = self.queue_rgb.tryGet()
-            if in_rgb is None:
+            try:
+                in_rgb = self.queue_rgb.tryGet()
+                if in_rgb is None:
+                    return None
+                self.last_read_error = None
+                return in_rgb.getCvFrame()
+            except Exception as exc:
+                self.last_read_error = exc
                 return None
-            return in_rgb.getCvFrame()
         else:
-            ret, frame = self.cap.read()
+            try:
+                ret, frame = self.cap.read()
+            except Exception as exc:
+                self.last_read_error = exc
+                return None
             if not ret:
                 return None
+            self.last_read_error = None
             return frame
 
     def process_frame(self, frame, draw_debug=False):
@@ -441,7 +452,10 @@ class CameraVision:
         else:
             if self.cap is not None:
                 self.cap.release()
-        cv2.destroyAllWindows()
+        try:
+            cv2.destroyAllWindows()
+        except cv2.error:
+            pass
         print("Camera released")
 
 
