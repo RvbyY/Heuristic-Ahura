@@ -165,6 +165,15 @@ def compute_steer(dist, values, sensors, estimated_turn):
     raw_steer = math.atan(g / h)
     return clamp(raw_steer / (math.pi / 2), -1.0, 1.0)
 
+def compute_steer_simple(dist):
+    left, center, right = dist
+    diff = right - left
+    total = left + right
+    if total <= 0.0:
+        return 0.0
+    steer = diff / total
+    return clamp(steer, -1.0, 1.0)
+
 def compute_target_speed(dist0, estimated_turn, friction, values, lambda2_adjusted):
     lambda_base = log_sigmoid(values.e1, values.e2, values.lambda1, lambda2_adjusted, estimated_turn)
     friction_factor = values.tau / (friction ** 2)

@@ -10,7 +10,8 @@ Features:
 Requirements:
 - OpenCV (cv2)
 - NumPy
-- Camera (USB or CSI camera on Jetson)
+- DepthAI (pip3 install depthai) — required for the OAK-D Lite (USB-C)
+- Camera: Luxonis OAK-D Lite (default), or any USB/CSI camera via use_oak=False
 """
 
 import cv2
@@ -23,28 +24,80 @@ class CameraVision:
     """
     Camera-based vision system for lane detection and speed estimation.
     """
-    def __init__(self, camera_id=0, width=640, height=480, fps=30):
+
+    def _init_oak_camera(self, width, height, fps):
+        """
+        Build a minimal DepthAI pipeline for the OAK-D Lite (RGB preview only)
+        and open the device connection over USB-C.
+
+        This replaces cv2.VideoCapture: the OAK-D Lite has its own onboard
+        VPU and is not exposed as a standard /dev/video* device, so it must
+        be driven through the depthai library instead of OpenCV directly.
+        """
+        try:
+            import depthai as dai
+        except ImportError as exc:
+            raise RuntimeError(
+                "Le module 'depthai' n'est pas installé. "
+                "Installe-le avec : pip3 install depthai"
+            ) from exc
+
+        self._dai = dai
+        pipeline = dai.Pipeline()
+
+        cam_rgb = pipeline.create(dai.node.ColorCamera)
+        cam_rgb.setPreviewSize(width, height)
+        cam_rgb.setInterleaved(False)
+        cam_rgb.setColorOrder(dai.ColorCameraProperties.ColorOrder.BGR)
+        cam_rgb.setFps(fps)
+
+        xout_rgb = pipeline.create(dai.node.XLinkOut)
+        xout_rgb.setStreamName("rgb")
+        cam_rgb.preview.link(xout_rgb.input)
+
+        try:
+            self.device = dai.Device(pipeline)
+        except RuntimeError as exc:
+            raise RuntimeError(
+                "Impossible de se connecter à l'OAK-D Lite. "
+                "Vérifie le câble USB-C (port USB3 conseillé) et que "
+                "le device n'est pas déjà utilisé par un autre programme."
+            ) from exc
+
+        self.queue_rgb = self.device.getOutputQueue(name="rgb", maxSize=4, blocking=False)
+        self.cap = None  # pas de VideoCapture en mode OAK
+
+    def __init__(self, camera_id=0, width=640, height=480, fps=30, use_oak=True):
         """
         Initialize camera vision system.
 
         Args:
-            camera_id: Camera device ID (0 for default camera)
+            camera_id: Camera device ID (unused when use_oak=True, kept for
+                       backward compatibility with USB/CSI mode)
             width: Frame width in pixels
             height: Frame height in pixels
             fps: Target frames per second
+            use_oak: If True (default), use a Luxonis OAK-D Lite over USB-C
+                     via DepthAI. If False, fall back to a plain cv2.VideoCapture
+                     (USB webcam / pre-configured CSI/GStreamer string).
         """
         self.camera_id = camera_id
         self.width = width
         self.height = height
         self.fps = fps
-        # Initialize camera
-        self.cap = cv2.VideoCapture(camera_id)
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-        self.cap.set(cv2.CAP_PROP_FPS, fps)
+        self.use_oak = use_oak
 
-        if not self.cap.isOpened():
-            raise RuntimeError(f"Failed to open camera {camera_id}")
+        if self.use_oak:
+            self._init_oak_camera(width, height, fps)
+        else:
+            # Fallback: regular USB camera or pre-built GStreamer pipeline
+            self.cap = cv2.VideoCapture(camera_id)
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+            self.cap.set(cv2.CAP_PROP_FPS, fps)
+            if not self.cap.isOpened():
+                raise RuntimeError(f"Failed to open camera {camera_id}")
+
         # Lane detection parameters
         self.roi_top = int(height * 0.5)  # Region of interest top (50% from top - lower half)
         self.roi_bottom = height
@@ -294,10 +347,16 @@ class CameraVision:
         Returns:
             numpy.ndarray: BGR frame, or None if failed
         """
-        ret, frame = self.cap.read()
-        if not ret:
-            return None
-        return frame
+        if self.use_oak:
+            in_rgb = self.queue_rgb.tryGet()
+            if in_rgb is None:
+                return None
+            return in_rgb.getCvFrame()
+        else:
+            ret, frame = self.cap.read()
+            if not ret:
+                return None
+            return frame
 
     def process_frame(self, frame, draw_debug=False):
         """
@@ -376,8 +435,12 @@ class CameraVision:
 
     def cleanup(self):
         """Release camera resources."""
-        if self.cap is not None:
-            self.cap.release()
+        if self.use_oak:
+            if getattr(self, 'device', None) is not None:
+                self.device.close()
+        else:
+            if self.cap is not None:
+                self.cap.release()
         cv2.destroyAllWindows()
         print("Camera released")
 
