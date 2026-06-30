@@ -105,9 +105,26 @@ def main_loop(sensors, state, values, car_esc, car_servo, mlp_model=None):
         friction = 1.0
     lambda2_adjusted = agent.adjust_for_width(values.tau / (friction ** 2), track_width=1.5)
     steer = agent.compute_steer_simple(sensors.dist)
-    target_speed = agent.compute_target_speed(sensors.dist[1], estimated_turn, friction, values, lambda2_adjusted)
+    
+    # Pass current speed for predictive braking
+    target_speed = agent.compute_target_speed(
+        sensors.dist[1], 
+        estimated_turn, 
+        friction, 
+        values, 
+        lambda2_adjusted,
+        current_speed=sensors.x_speed
+    )
     target_speed = agent.apply_danger_zone_speed(target_speed, state, values)
-    accel, brake = agent.speed_to_pedal(sensors.x_speed, target_speed)
+    
+    # Pass previous accel/brake for smoothing
+    accel, brake = agent.speed_to_pedal(
+        sensors.x_speed, 
+        target_speed,
+        prev_accel=state.prev_accel,
+        prev_brake=state.prev_brake
+    )
+    
     encoder_pulses_tick = state.encoder_pulse_count
     state.encoder_pulse_count = 0
 
@@ -123,6 +140,10 @@ def main_loop(sensors, state, values, car_esc, car_servo, mlp_model=None):
     state.prev_damage = sensors.damage
     state.lap_position += sensors.x_speed * values.dt
     state.prev_steer = output.steer
+    
+    # Store current accel/brake for next iteration smoothing
+    state.prev_accel = output.accel
+    state.prev_brake = output.brake
 
     # Apply to RC car hardware
     # Servo: convert steer [-1, 1] to position [0, 1]

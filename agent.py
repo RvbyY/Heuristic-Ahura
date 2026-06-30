@@ -40,6 +40,8 @@ class state:
         self.prev_damage = 0.0
         self.is_airborne = False
         self.prev_steer = 0.0
+        self.prev_accel = 0.0
+        self.prev_brake = 0.0
 
 class output:
     """
@@ -190,25 +192,93 @@ def compute_steer_simple(dist):
     steer = diff / total
     return clamp(steer, -1.0, 1.0)
 
-def compute_target_speed(dist0, estimated_turn, friction, values, lambda2_adjusted):
+def compute_target_speed(dist0, estimated_turn, friction, values, lambda2_adjusted, current_speed=0.0):
+    """
+    Compute target speed with enhanced braking for sharp turns.
+    
+    Args:
+        dist0: center distance sensor reading
+        estimated_turn: estimated turn angle
+        friction: current friction estimate
+        values: heuristic_value configuration
+        lambda2_adjusted: adjusted lambda2 parameter
+        current_speed: current speed (for predictive braking)
+    
+    Returns:
+        float: target speed with turn-based reduction applied
+    """
     lambda_base = log_sigmoid(values.e1, values.e2, values.lambda1, lambda2_adjusted, estimated_turn)
     friction_factor = values.tau / (friction ** 2)
     lambda_val = lambda_base * friction_factor / values.tau
     ratio = clamp(dist0 / values.max_dist, 0.0, 1.0)
     target_speed = (ratio ** lambda_val) * (values.max_speed - values.min_speed) + values.min_speed
+    
+    # Enhanced turn detection and braking
+    turn_magnitude = abs(estimated_turn)
+    
+    # Define turn severity thresholds
+    sharp_turn_threshold = 0.3  # radians (~17 degrees)
+    moderate_turn_threshold = 0.15  # radians (~8.6 degrees)
+    
+    # Apply speed reduction based on turn severity
+    if turn_magnitude > sharp_turn_threshold:
+        # Sharp turn detected - aggressive braking
+        # Reduce speed more if currently going fast
+        speed_factor = 0.4 if current_speed > 2.0 else 0.5
+        turn_speed_limit = values.min_speed * 1.2
+        target_speed = min(target_speed * speed_factor, turn_speed_limit)
+    elif turn_magnitude > moderate_turn_threshold:
+        # Moderate turn - gentle braking
+        speed_factor = 0.6 if current_speed > 2.0 else 0.7
+        turn_speed_limit = values.min_speed * 1.8
+        target_speed = min(target_speed * speed_factor, turn_speed_limit)
+    
+    # Ensure we don't go below minimum speed
+    target_speed = max(target_speed, values.min_speed)
+    
     return target_speed
 
-def speed_to_pedal(x_speed, target_speed):
-    """Convert target speed to accel/brake pedals"""
-    b = 1.0
-    p = 2.0 / (1.0 + math.exp(b * (x_speed - target_speed))) - 1.0
-
-    if p >= 0:
-        accel = p
+def speed_to_pedal(x_speed, target_speed, prev_accel=0.0, prev_brake=0.0):
+    """
+    Convert target speed to accel/brake pedals with smoothing to prevent oscillation.
+    
+    Args:
+        x_speed: current speed
+        target_speed: desired speed
+        prev_accel: previous acceleration value (for smoothing)
+        prev_brake: previous brake value (for smoothing)
+    
+    Returns:
+        tuple: (accel, brake) with smoothing applied
+    """
+    # Add hysteresis zone to prevent rapid switching
+    speed_error = target_speed - x_speed
+    hysteresis = 0.15  # Dead zone to prevent oscillation
+    
+    # Smoothing factor (0.0 = no smoothing, 1.0 = full smoothing)
+    alpha = 0.3
+    
+    if speed_error > hysteresis:
+        # Need to accelerate
+        b = 1.0
+        p = 2.0 / (1.0 + math.exp(b * (x_speed - target_speed))) - 1.0
+        accel = max(0.0, p)
         brake = 0.0
-    else:
+    elif speed_error < -hysteresis:
+        # Need to brake
+        b = 1.0
+        p = 2.0 / (1.0 + math.exp(b * (x_speed - target_speed))) - 1.0
         accel = 0.0
-        brake = abs(p)
+        brake = abs(min(0.0, p))
+    else:
+        # In dead zone - maintain current state with decay
+        accel = prev_accel * 0.8
+        brake = prev_brake * 0.8
+    
+    # Apply smoothing to prevent jerky movements
+    accel = alpha * prev_accel + (1.0 - alpha) * accel
+    brake = alpha * prev_brake + (1.0 - alpha) * brake
+    
     return accel, brake
 
 def apply_abs(brake, sensors, values, encoder_pulses_this_tick):
