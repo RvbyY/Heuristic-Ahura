@@ -166,6 +166,22 @@ def compute_steer(dist, values, sensors, estimated_turn):
     return clamp(raw_steer / (math.pi / 2), -1.0, 1.0)
 
 def compute_steer_simple(dist):
+    """
+    Compute steering using only 3 distance sensors [left, center, right].
+
+    Designed for the RC car camera pipeline (camera_vision.py), which only
+    provides 3 distances via get_distance_sensors_from_lanes(), unlike the
+    original compute_steer() which expects ~19 sensors from the racing
+    simulator (indices -9..9). Using compute_steer() with only 3 values
+    causes an IndexError as soon as the sensor_list window exceeds the
+    available indices.
+
+    Args:
+        dist: list of 3 distances [left, center, right] in meters
+
+    Returns:
+        float: steering in range [-1.0, 1.0], negative = left, positive = right
+    """
     left, center, right = dist
     diff = right - left
     total = left + right
