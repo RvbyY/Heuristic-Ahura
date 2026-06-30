@@ -59,5 +59,9 @@ Jetson.GPIO may warn when the carrier board is not recognized as an official Jet
 - Camera-only speed uses optical flow and is unreliable at standstill. Do not enable stuck recovery for camera-only runs unless a better speed source is available.
 - `example_rc_car_with_camera.py` defaults to a safety stop when no lane is detected. Use `--allow-no-lane` only for controlled bench testing.
 - Manual driving in `../car-code/LibGamepad/pilotage.py` uses `Robocar.avancer()` from `../car-code/LibGamepad/robocar.py`, which sends `pyvesc.SetDutyCycle(int(percent * 1000))` over `/dev/ttyACM0`. The AI camera script should use the same VESC motor path, not Jetson GPIO pin 33.
-- Keep autonomous VESC duty conservative during tests. Default `--max-duty-percent` is `5%` with a `5%` minimum forward duty to overcome motor deadband; manual driving used `15%`. The heuristic speed cap remains `max_speed: 3.0`.
-- OAK read failures must stop the VESC before retrying or exiting. The camera script defaults to `15 FPS` and `maxSize=1` output queue to reduce USB/host load.
+- Keep autonomous VESC duty conservative during tests. The camera script uses fixed `--drive-duty-percent 8` while lane geometry is valid; manual driving used `15%`. The heuristic speed cap remains `max_speed: 3.0`.
+- OAK read failures must stop the VESC before retrying or exiting. The camera script defaults to `416x320 @ 10 FPS` and `maxSize=1` output queue to reduce USB/host load.
+- Camera steering should use lane geometry directly: bottom lane center offset plus lookahead/heading error. Symmetric `[left, center, right]` camera distances alone produce near-zero steering on curves.
+- For autonomous steering responsiveness, optical-flow speed estimation is disabled by default; enable with `--estimate-speed` only when measuring camera speed.
+- Reject saturated lane geometry (`Lane: INVALID`) instead of steering on it. The lookahead row defaults near the bottom of the ROI (`--lookahead-y-fraction 0.75`) because far/top ROI lookahead caused false hard-right steering on straight lines.
+- The log `Mode` field is the best motor-state indicator: `DRIVE`, `GRACE`, or `STOP`. `Accel` is still the heuristic output, but VESC duty is overridden by fixed drive duty in camera mode.

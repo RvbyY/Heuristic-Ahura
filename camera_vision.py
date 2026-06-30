@@ -67,25 +67,40 @@ class CameraVision:
         self.queue_rgb = self.device.getOutputQueue(name="rgb", maxSize=1, blocking=False)
         self.cap = None  # pas de VideoCapture en mode OAK
 
-    def __init__(self, camera_id=0, width=640, height=480, fps=15, use_oak=True):
+    def __init__(
+        self,
+        camera_id=0,
+        width=416,
+        height=320,
+        fps=10,
+        use_oak=True,
+        estimate_speed_enabled=True,
+        lookahead_y_fraction=0.75,
+    ):
         """
         Initialize camera vision system.
 
         Args:
             camera_id: Camera device ID (unused when use_oak=True, kept for
                        backward compatibility with USB/CSI mode)
-            width: Frame width in pixels
-            height: Frame height in pixels
-            fps: Target frames per second
+            width: Frame width in pixels, default 416 to reduce USB load
+            height: Frame height in pixels, default 320 to reduce USB load
+            fps: Target frames per second, default 10 to reduce USB load
             use_oak: If True (default), use a Luxonis OAK-D Lite over USB-C
                      via DepthAI. If False, fall back to a plain cv2.VideoCapture
                      (USB webcam / pre-configured CSI/GStreamer string).
+            estimate_speed_enabled: If True, run optical-flow speed estimation.
+                                    Disable for faster steering-only testing.
+            lookahead_y_fraction: Lane row used for lookahead steering, as a
+                                  fraction from ROI top (0.0) to ROI bottom (1.0).
         """
         self.camera_id = camera_id
         self.width = width
         self.height = height
         self.fps = fps
         self.use_oak = use_oak
+        self.estimate_speed_enabled = estimate_speed_enabled
+        self.lookahead_y_fraction = float(np.clip(lookahead_y_fraction, 0.0, 1.0))
         self.last_read_error = None
 
         if self.use_oak:
@@ -341,6 +356,46 @@ class CameraVision:
         right_dist = center_dist if right_line is not None else default_dist
         return [left_dist, center_dist, right_dist]
 
+    def get_lane_guidance(self, left_line, right_line):
+        """
+        Compute normalized lane center offsets for steering.
+
+        Returns:
+            dict with bottom center offset, lookahead offset, and heading error.
+            Positive values mean the lane center/road ahead is to the right.
+        """
+        guidance = {
+            'center_offset': 0.0,
+            'lookahead_offset': 0.0,
+            'heading_error': 0.0,
+        }
+        if left_line is None or right_line is None:
+            return guidance
+
+        frame_center = self.width / 2
+        half_width = self.width / 2
+        bottom_center = (left_line[2] + right_line[2]) / 2
+        left_lookahead = left_line[0] + (left_line[2] - left_line[0]) * self.lookahead_y_fraction
+        right_lookahead = right_line[0] + (right_line[2] - right_line[0]) * self.lookahead_y_fraction
+        lookahead_center = (left_lookahead + right_lookahead) / 2
+
+        guidance['center_offset'] = float(np.clip(
+            (bottom_center - frame_center) / half_width,
+            -1.0,
+            1.0,
+        ))
+        guidance['lookahead_offset'] = float(np.clip(
+            (lookahead_center - frame_center) / half_width,
+            -1.0,
+            1.0,
+        ))
+        guidance['heading_error'] = float(np.clip(
+            (lookahead_center - bottom_center) / half_width,
+            -1.0,
+            1.0,
+        ))
+        return guidance
+
     def read_frame(self):
         """
         Read a frame from the camera.
@@ -390,7 +445,9 @@ class CameraVision:
             }
         """
         left_line, right_line, center_offset, lane_width = self.detect_lanes(frame)
-        speed = self.estimate_speed(frame)
+        lane_guidance = self.get_lane_guidance(left_line, right_line)
+        center_offset = lane_guidance['center_offset']
+        speed = self.estimate_speed(frame) if self.estimate_speed_enabled else 0.0
         avg_pace = self.get_average_pace()
         distance_sensors = self.get_distance_sensors_from_lanes(left_line, right_line, lane_width)
 
@@ -408,6 +465,8 @@ class CameraVision:
             if lane_width is not None:
                 lane_center = int(frame_center + center_offset * (self.width / 2))
                 cv2.line(debug_frame, (lane_center, 0), (lane_center, self.height), (0, 255, 255), 2)
+                lookahead_center = int(frame_center + lane_guidance['lookahead_offset'] * (self.width / 2))
+                cv2.line(debug_frame, (lookahead_center, self.roi_top), (lane_center, self.roi_bottom), (255, 255, 0), 2)
             cv2.putText(debug_frame, f"Speed: {speed:.2f} m/s", (10, 30),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
             cv2.putText(debug_frame, f"Avg Pace: {avg_pace:.2f} m/s", (10, 60),
@@ -423,6 +482,9 @@ class CameraVision:
             'right_line': right_line,
             'center_offset': center_offset,
             'lane_width': lane_width,
+            'lane_guidance': lane_guidance,
+            'lookahead_offset': lane_guidance['lookahead_offset'],
+            'heading_error': lane_guidance['heading_error'],
             'speed': speed,
             'avg_pace': avg_pace,
             'distance_sensors': distance_sensors,

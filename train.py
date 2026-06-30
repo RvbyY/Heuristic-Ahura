@@ -43,8 +43,8 @@ class VESCThrottle:
         self,
         port='/dev/ttyACM0',
         baudrate=115200,
-        max_duty_percent=5.0,
-        min_forward_duty_percent=5.0,
+        max_duty_percent=10.0,
+        min_forward_duty_percent=8.0,
         ser=None,
     ):
         self.ser = ser if ser is not None else serial.Serial(port, baudrate=baudrate, timeout=0.1)
@@ -81,8 +81,8 @@ class VESCRobocar:
         self,
         port='/dev/ttyACM0',
         baudrate=115200,
-        max_duty_percent=5.0,
-        min_forward_duty_percent=5.0,
+        max_duty_percent=10.0,
+        min_forward_duty_percent=8.0,
     ):
         self.ser = serial.Serial(port, baudrate=baudrate, timeout=0.1)
         time.sleep(0.2)
@@ -164,6 +164,7 @@ def main_loop(
     car_servo,
     mlp_model=None,
     enable_stuck_recovery=True,
+    steer_override=None,
 ):
     """
     Main control loop for RC car using agent.py algorithms.
@@ -178,6 +179,7 @@ def main_loop(
         enable_stuck_recovery: If True, reverse/brake when the car appears stuck.
                                Disable this when speed comes only from camera
                                optical flow, which is unreliable at standstill.
+        steer_override: Optional steering value in [-1, 1] from camera guidance.
 
     Returns:
         output: agent.output object with control values
@@ -199,6 +201,8 @@ def main_loop(
         steer = agent.compute_steer_simple(sensors.dist)
     else:
         steer = agent.compute_steer(sensors.dist, values, sensors, estimated_turn)
+    if steer_override is not None:
+        steer = max(-1.0, min(1.0, steer_override))
     target_speed = agent.compute_target_speed(sensors.dist[1], estimated_turn, friction, values, lambda2_adjusted)
     target_speed = agent.apply_danger_zone_speed(target_speed, state, values)
     accel, brake = agent.speed_to_pedal(sensors.x_speed, target_speed)

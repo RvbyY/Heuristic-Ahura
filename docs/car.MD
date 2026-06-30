@@ -26,11 +26,13 @@ The OAK-D Lite is not a normal webcam and usually does not appear as `/dev/video
 The camera system detects two white lane boundary lines in the lower half of the image. From those lines it computes:
 
 - lane center offset,
+- lookahead lane offset,
+- heading error from bottom lane center to lookahead lane center,
 - lane width,
 - estimated speed from optical flow,
 - simplified distance readings: `[left, center, right]`.
 
-These three distance readings are passed to the driving algorithm. For this RC car path, steering uses the simple three-sensor method instead of the older wider simulator sensor fan.
+For this RC car path, steering uses camera lane geometry directly. The older three-distance heuristic is still available as a fallback, but symmetric camera distances are not enough to follow curves.
 
 ## Control Pipeline
 
@@ -51,9 +53,13 @@ The script also supports headless runs. If no `DISPLAY` or `WAYLAND_DISPLAY` is 
 - Camera-only runs disable stuck recovery because optical-flow speed is unreliable at standstill.
 - Use `--allow-no-lane` only for controlled bench tests, preferably with the wheels lifted.
 - The camera run uses the same VESC motor command as manual `pilotage.py`: `SetDutyCycle(int(percent * 1000))`.
-- The default maximum VESC duty is `5%`, matching the lowest manual motor test that should overcome motor deadband. The algorithm speed cap remains `max_speed: 3.0`.
-- The default camera FPS is `15` to reduce OAK USB load, especially if the camera is running through USB2.
+- The default VESC drive command is now a fixed `8%` autonomous crawl while lane geometry is valid. Manual driving used `15%`.
+- The default camera stream is `416x320 @ 10fps` to reduce OAK USB load, especially if the camera is running through USB2.
+- Optical-flow speed estimation is disabled by default in the autonomous camera run so steering updates are faster. Use `--estimate-speed` only when needed for debugging.
 - If camera reads fail, the script centers steering, sends zero VESC motor duty, and exits cleanly after repeated misses or a DepthAI error.
+- Lane fits with saturated offsets, impossible heading jumps, or bad lane widths are reported as `BADOFF`, `BADHDG`, or `BADWID` and stop the motor by default.
+- After a valid lane, transient lane loss uses a short `GRACE` mode with the last good steering before stopping.
+- Steering is smoothed and rate-limited to avoid reacting hard to one bad camera frame.
 - Cleanup centers steering, sends zero VESC motor duty, closes the camera, and releases OpenCV resources.
 
 ## Useful Commands
@@ -73,13 +79,25 @@ sudo python3 example_rc_car_with_camera.py --allow-no-lane
 Use a different VESC duty limit if needed:
 
 ```bash
-sudo python3 example_rc_car_with_camera.py --max-duty-percent 10
+sudo python3 example_rc_car_with_camera.py --drive-duty-percent 9
 ```
 
 Lower camera load if the OAK is unstable:
 
 ```bash
-sudo python3 example_rc_car_with_camera.py --camera-fps 10
+sudo python3 example_rc_car_with_camera.py --camera-width 320 --camera-height 240 --camera-fps 8
+```
+
+Tune steering response if it understeers or oversteers:
+
+```bash
+sudo python3 example_rc_car_with_camera.py --lane-lookahead-gain 2.0 --lane-offset-gain 0.8
+```
+
+Make steering less reactive if it drifts on straight lines:
+
+```bash
+sudo python3 example_rc_car_with_camera.py --lane-lookahead-gain 1.2 --max-steer-change 0.15
 ```
 
 Check Python syntax after edits:
