@@ -4,12 +4,32 @@ import statistics
 import time
 
 class sensors:
-    def __init__(self, dist, x_speed, y_speed, z_speed,
-                 wheel_v, rpm, gear, track_pos, damage, opp):
+    """
+    Simplified sensors class for RC car.
+    For RC car usage:
+    - dist: list of distance sensor readings (can be simplified, e.g., [left, center, right])
+    - x_speed: current speed estimate (can be from encoder or IMU)
+    - y_speed: lateral speed (optional, can be 0.0 if not available)
+    - z_speed: vertical acceleration (optional, can be 0.0 if not available)
+    - wheel_v: wheel velocities (optional, can be [x_speed]*4 if not available)
+    - rpm: motor RPM (optional, can be estimated from speed or set to 0)
+    - gear: gear number (not used in RC car, can be 1)
+    - track_pos: position on track (optional, can be 0.0)
+    - damage: damage counter (optional, can be 0.0)
+    - opp: opponent distances (not used in RC car, can be empty list)
+    """
+    def __init__(self, dist, x_speed, y_speed=0.0, z_speed=0.0,
+                 wheel_v=None, rpm=0, gear=1, track_pos=0.0, damage=0.0, opp=None):
         self.dist = dist
-        self.x_speed, self.y_speed, self.z_speed = x_speed, y_speed, z_speed
-        self.wheel_v, self.rpm, self.gear = wheel_v, rpm, gear
-        self.track_pos, self.damage, self.opp = track_pos, damage, opp
+        self.x_speed = x_speed
+        self.y_speed = y_speed if y_speed is not None else 0.0
+        self.z_speed = z_speed if z_speed is not None else 0.0
+        self.wheel_v = wheel_v if wheel_v is not None else [x_speed] * 4
+        self.rpm = rpm
+        self.gear = gear
+        self.track_pos = track_pos
+        self.damage = damage
+        self.opp = opp if opp is not None else []
 
 class state:
     def __init__(self, friction, danger_zones, lap_position,
@@ -22,8 +42,42 @@ class state:
         self.prev_steer = 0.0
 
 class output:
+    """
+    Output class for RC car control.
+    - steer: steering angle in range [-1.0, 1.0] where -1 is full left, +1 is full right
+    - accel: acceleration in range [0.0, 1.0]
+    - brake: braking in range [0.0, 1.0]
+
+    For RC car conversion:
+    - steer_servo(): converts steer to servo position [0.0, 1.0] for direction.py
+    - speed_pwm(): converts accel/brake to PWM duty cycle [5.0, 10.0] for ESC control
+    """
     def __init__(self, steer, accel, brake):
-        self.steer, self.accel, self.brake = steer, accel, brake
+        self.steer = steer  # -1.0 to 1.0
+        self.accel = accel  # 0.0 to 1.0
+        self.brake = brake  # 0.0 to 1.0
+
+    def steer_servo(self):
+        """Convert steer [-1, 1] to servo position [0, 1] for direction.py make_servo_packet()"""
+        return (self.steer + 1.0) / 2.0
+
+    def speed_pwm(self):
+        """
+        Convert accel/brake to PWM duty cycle for ESC control.
+        Returns duty cycle where:
+        - 7.5 = neutral (stopped)
+        - 7.5 to 10.0 = forward (accel)
+        - 7.5 to 5.0 = reverse (brake)
+        Matches the ESC.write() method in train.py
+        """
+        duty_cycle = 7.5
+        if self.accel > 0.0:
+            duty_cycle = 7.5 + (self.accel * 2.5)  # 7.5 to 10.0
+        elif self.brake > 0.0:
+            duty_cycle = 7.5 - (self.brake * 2.5)  # 7.5 to 5.0
+        return duty_cycle
+
+
 
 class heuristic_value:
     def __init__(self, cfg):
@@ -41,6 +95,7 @@ class heuristic_value:
         self.dt = cfg['dt']
 
 def estimate_turn(dist, values):
+    """Estimate turn based on distance sensors"""
     d_neg1 = dist[-1]
     d_0 = dist[1]
     d_pos1 = dist[0]
@@ -79,7 +134,8 @@ def log_sigmoid(x1, x2, y1, y2, x):
     c = math.log(a / (1.01 * y1 - d) - 1) / b - x1
     return a / (1 + math.exp(b * (x + c))) + d
 
-def compute_steer(dist, values, sensors, estimated_turn, alpha, target_position=None):
+def compute_steer(dist, values, sensors, estimated_turn):
+    """Compute steering using distance sensors"""
     base_sensor = dist.index(max(dist))
     y = log_sigmoid(values.x1, values.x2, values.y1, values.y2, sensors.dist[1])
     y = round(y)
@@ -118,6 +174,7 @@ def compute_target_speed(dist0, estimated_turn, friction, values, lambda2_adjust
     return target_speed
 
 def speed_to_pedal(x_speed, target_speed):
+    """Convert target speed to accel/brake pedals"""
     b = 1.0
     p = 2.0 / (1.0 + math.exp(b * (x_speed - target_speed))) - 1.0
 
@@ -156,6 +213,7 @@ def apply_asr(accel, encoder_pulses_this_tick, sensors, values):
     return accel
 
 def estimate_friction(sensors, mlp_model, state):
+    """Estimate friction (simplified if no MLP model)"""
     slip_d = abs(sensors.x_speed - statistics.mean(sensors.wheel_v))
 
     if abs(state.prev_steer) > 0.05:
