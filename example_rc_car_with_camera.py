@@ -55,12 +55,12 @@ def main():
 
     # --- Paramètres à ajuster ---
     # Vitesse : commence à 0.15, monte par 0.05 selon le comportement réel
-    DUTY_CYCLE = 0.15
+    DUTY_CYCLE = 0.07
 
     # Sensibilité de la direction : multiplie center_offset [-1..1] → angle servo
     # Augmente si la voiture ne tourne pas assez dans les virages
     # Baisse si elle oscille trop en ligne droite
-    STEER_GAIN = 0.6
+    STEER_GAIN = 0.2
 
     print(f"\nControl loop started. Duty: {DUTY_CYCLE:.0%}, Gain: {STEER_GAIN}. Ctrl+C to stop.\n")
 
@@ -88,7 +88,7 @@ def main():
             # center_offset positif = voiture trop à gauche → braquer à droite (steer positif)
             # center_offset négatif = voiture trop à droite → braquer à gauche (steer négatif)
             # On multiplie par STEER_GAIN pour doser la correction
-            steer = lane_offset * STEER_GAIN
+            steer = -lane_offset * STEER_GAIN
             steer = max(-1.0, min(1.0, steer))
 
             # Conversion [-1, 1] → [0, 1] pour le servo (0=gauche, 0.5=centre, 1=droite)
