@@ -59,15 +59,7 @@ def main():
 
     print("\nControl loop started. Ctrl+C to stop.\n")
 
-    # --- Paramètres ramp-up ---
-    # La voiture part à fond au démarrage car current_speed=0 → accel=1.0.
-    # On plafonne accel progressivement sur RAMP_DURATION secondes.
-    RAMP_DURATION = 3.0   # secondes pour atteindre la vitesse max
-    MAX_ACCEL_CAP = 0.20  # accel max au démarrage (20% du duty cycle)
-
     loop_count  = 0
-    start_time  = time.time()
-
     try:
         while True:
             frame = vision.read_frame()
@@ -83,14 +75,6 @@ def main():
 
             sensors = create_simple_sensors(dist_readings, current_speed)
             output  = main_loop(sensors, state, values, car_esc, car_servo, mlp_model=None)
-
-            # Ramp-up : plafonne accel pendant les premières secondes
-            elapsed = time.time() - start_time
-            if elapsed < RAMP_DURATION:
-                ramp_factor = elapsed / RAMP_DURATION        # 0.0 → 1.0
-                accel_cap   = MAX_ACCEL_CAP + ramp_factor * (1.0 - MAX_ACCEL_CAP)
-                capped_accel = min(output.accel, accel_cap)
-                car_esc.write(capped_accel, output.brake)
 
             # Correction direction via center_offset caméra
             if abs(lane_offset) > 0.1:
