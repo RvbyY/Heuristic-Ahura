@@ -14,7 +14,7 @@ import time
 import yaml
 
 import agent
-from train import ESC, Servo, main_loop, create_simple_sensors, create_simple_state
+from train import ESC, Servo, create_simple_state
 from camera_vision import CameraVision
 
 
@@ -28,9 +28,7 @@ def main():
     print("Initializing RC car control system...")
 
     values = load_config()
-    print(f"Config loaded: max_speed={values.max_speed}, min_speed={values.min_speed}")
-
-    state = create_simple_state()
+    state  = create_simple_state()
 
     # --- Caméra OAK-D Lite ---
     try:
@@ -40,7 +38,7 @@ def main():
         print(f"Camera init failed: {e}")
         return
 
-    # --- VESC (servo + moteur sur le même port série) ---
+    # --- VESC ---
     try:
         car_servo = Servo(port='/dev/ttyACM0', baudrate=115200)
         car_esc   = ESC(port='/dev/ttyACM0', baudrate=115200)
@@ -50,20 +48,21 @@ def main():
         vision.cleanup()
         return
 
-    # Sécurité : servo centré, moteur à zéro avant de démarrer
     car_servo.write(0.5)
     car_esc.write(0.0, 0.0)
     time.sleep(0.5)
-
     vision.start_race_timer()
 
-    # --- Vitesse fixe ---
-    # L'algo de vitesse original freinait en voyant les lignes blanches.
-    # On fixe un duty cycle constant et on ajuste à la main par paliers.
-    # Commence à 0.15 (15%) et monte de 0.05 en 0.05 selon le comportement.
+    # --- Paramètres à ajuster ---
+    # Vitesse : commence à 0.15, monte par 0.05 selon le comportement réel
     DUTY_CYCLE = 0.15
 
-    print(f"\nControl loop started. Duty cycle: {DUTY_CYCLE:.0%}. Ctrl+C to stop.\n")
+    # Sensibilité de la direction : multiplie center_offset [-1..1] → angle servo
+    # Augmente si la voiture ne tourne pas assez dans les virages
+    # Baisse si elle oscille trop en ligne droite
+    STEER_GAIN = 0.6
+
+    print(f"\nControl loop started. Duty: {DUTY_CYCLE:.0%}, Gain: {STEER_GAIN}. Ctrl+C to stop.\n")
 
     loop_count = 0
     start_time = time.time()
@@ -77,19 +76,26 @@ def main():
 
             result = vision.process_frame(frame, draw_debug=False)
 
-            dist_readings = result['distance_sensors']
+            lane_offset   = result['center_offset']   # -1.0 (trop à droite) .. +1.0 (trop à gauche)
             current_speed = result['speed']
-            lane_offset   = result['center_offset']
 
-            sensors = create_simple_sensors(dist_readings, current_speed)
-            output  = main_loop(sensors, state, values, car_esc, car_servo,
-                                duty_cycle=DUTY_CYCLE, mlp_model=None)
+            # --- Direction ---
+            # center_offset positif = voiture trop à gauche → braquer à droite (steer positif)
+            # center_offset négatif = voiture trop à droite → braquer à gauche (steer négatif)
+            # On multiplie par STEER_GAIN pour doser la correction
+            steer = lane_offset * STEER_GAIN
+            steer = max(-1.0, min(1.0, steer))
 
-            # Correction direction via center_offset caméra
-            if abs(lane_offset) > 0.1:
-                correction      = -lane_offset * 0.3
-                corrected_steer = max(-1.0, min(1.0, output.steer + correction))
-                car_servo.write((corrected_steer + 1.0) / 2.0)
+            # Conversion [-1, 1] → [0, 1] pour le servo (0=gauche, 0.5=centre, 1=droite)
+            servo_pos = (steer + 1.0) / 2.0
+            car_servo.write(servo_pos)
+
+            # --- Vitesse fixe ---
+            car_esc.write(DUTY_CYCLE, 0.0)
+
+            # Mise à jour état
+            state.lap_position += current_speed * values.dt
+            state.prev_steer    = steer
 
             # Log console toutes les ~1 seconde
             loop_count += 1
@@ -97,9 +103,9 @@ def main():
                 hz = loop_count / (time.time() - start_time)
                 print(f"[{loop_count:5d}] "
                       f"Speed: {current_speed:5.2f} m/s | "
-                      f"Steer: {output.steer:+5.2f} | "
                       f"Offset: {lane_offset:+5.2f} | "
-                      f"Duty: {DUTY_CYCLE:.0%} | "
+                      f"Steer: {steer:+5.2f} | "
+                      f"Servo: {servo_pos:4.2f} | "
                       f"Hz: {hz:4.1f}")
 
             time.sleep(values.dt)
