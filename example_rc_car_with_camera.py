@@ -75,6 +75,11 @@ def main():
                 break
 
             result = vision.process_frame(frame, draw_debug=False)
+            lane_offset   = result['center_offset']
+            current_speed = result['speed']
+
+            # LOG TEMPORAIRE — à supprimer une fois le diagnostic fait
+            print(f"offset={result['center_offset']:+.3f} | left={result['left_line']} | right={result['right_line']} | width={result['lane_width']}")
 
             lane_offset   = result['center_offset']   # -1.0 (trop à droite) .. +1.0 (trop à gauche)
             current_speed = result['speed']
@@ -108,7 +113,7 @@ def main():
                       f"Servo: {servo_pos:4.2f} | "
                       f"Hz: {hz:4.1f}")
 
-            time.sleep(values.dt)
+            # time.sleep(values.dt)
 
     except KeyboardInterrupt:
         print("\nStopping...")
