@@ -1,0 +1,24 @@
+# requirements.txt
+depthai
+numpy
+networkx
+flask
+requests
+PyYAML
+certifi
+charset-normalizer
+coloredlogs
+filelock
+flatbuffers
+fsspec
+humanfriendly
+idna
+importlib_resources
+Jinja2
+MarkupSafe
+mpmath
+packaging
+protobuf
+sympy
+typing_extensions
+urllib3
