@@ -32,11 +32,8 @@ class Servo:
         self.write(0.5)  # Center
         self.ser.close()
 
+
 # ESC control via VESC serial (same approach as robocar.py)
-# La précédente implémentation GPIO PWM était incorrecte — le moteur est
-# piloté par un VESC qui accepte uniquement des commandes série, pas du
-# PWM sur un pin GPIO. Le GPIO 33 n'était pas connecté au VESC, donc
-# les commandes moteur partaient dans le vide et la voiture ne bougeait pas.
 try:
     from pyvesc import SetDutyCycle, encode
     PYVESC_AVAILABLE = True
@@ -47,10 +44,7 @@ except ImportError:
 class ESC:
     """
     Contrôle moteur via VESC port série.
-
-    Envoie des commandes SetDutyCycle sur le port série, exactement
-    comme robocar.py. accel et brake viennent de agent.speed_to_pedal()
-    en [0.0, 1.0] et sont combinés en duty cycle signé [-100, 100].
+    accel et brake en [0.0, 1.0], combinés en duty cycle signé [-100, 100].
     """
     def __init__(self, port='/dev/ttyACM0', baudrate=115200):
         if not PYVESC_AVAILABLE:
@@ -62,12 +56,6 @@ class ESC:
         time.sleep(0.2)
 
     def write(self, accel, brake):
-        """
-        Envoie le duty cycle au VESC via port série.
-
-        accel : [0.0, 1.0] — accélération avant  → duty +0..+100
-        brake : [0.0, 1.0] — freinage/arrière    → duty -0..-100
-        """
         accel = min(max(float(accel), 0.0), 1.0)
         brake = min(max(float(brake), 0.0), 1.0)
         pourcent = (accel - brake) * 100.0
@@ -82,66 +70,42 @@ class ESC:
         self.ser.close()
 
 
-def main_loop(sensors, state, values, car_esc, car_servo, mlp_model=None):
+def main_loop(sensors, state, values, car_esc, car_servo, duty_cycle=0.15, mlp_model=None):
     """
-    Main control loop for RC car using agent.py algorithms.
+    Boucle de contrôle principale.
+
+    La vitesse est fixée directement par duty_cycle (0.0 à 1.0).
+    L'algo de vitesse original (speed_to_pedal) est désactivé car il
+    interprète les lignes blanches comme des obstacles et freine — ce qui
+    est le comportement inverse de ce qu'on veut sur un circuit.
+
+    Seule la direction est calculée par l'algo (compute_steer_simple +
+    correction center_offset).
 
     Args:
-        sensors: agent.sensors object with distance readings and speed
-        state: agent.state object for tracking state
-        values: agent.heuristic_value object with configuration
-        car_esc: ESC instance for motor control
-        car_servo: Servo instance for steering control
-        mlp_model: Optional MLP model for friction estimation (can be None)
-
-    Returns:
-        output: agent.output object with control values
+        duty_cycle: puissance moteur fixe en [0.0, 1.0]. Commence à 0.15
+                    et monte par paliers de 0.05 selon le comportement réel.
     """
     estimated_turn = agent.estimate_turn(sensors.dist, values)
 
-    if mlp_model is not None:
-        friction = agent.estimate_friction(sensors, mlp_model, state)
-    else:
-        friction = 1.0
-    lambda2_adjusted = agent.adjust_for_width(values.tau / (friction ** 2), track_width=1.5)
+    # Direction uniquement — vitesse gérée par duty_cycle fixe
     steer = agent.compute_steer_simple(sensors.dist)
-    target_speed = agent.compute_target_speed(sensors.dist[1], estimated_turn, friction, values, lambda2_adjusted)
-    target_speed = agent.apply_danger_zone_speed(target_speed, state, values)
-    accel, brake = agent.speed_to_pedal(sensors.x_speed, target_speed)
-    encoder_pulses_tick = state.encoder_pulse_count
-    state.encoder_pulse_count = 0
 
-    if encoder_pulses_tick > 0:
-        brake = agent.apply_abs(brake, sensors, values, encoder_pulses_tick)
-        accel = agent.apply_asr(accel, encoder_pulses_tick, sensors, values)
-    output = agent.output(steer, accel, brake)
-    output = agent.handle_jump(sensors, output, values, state)
+    output = agent.output(steer, accel=duty_cycle, brake=0.0)
     output = agent.handle_stuck(sensors, output, state, values)
 
-    if sensors.damage > state.prev_damage + 50:
-        agent.record_danger_zone(state)
-    state.prev_damage = sensors.damage
     state.lap_position += sensors.x_speed * values.dt
     state.prev_steer = output.steer
 
-    # Apply to RC car hardware
-    # Servo: convert steer [-1, 1] to position [0, 1]
+    # Envoi servo (direction)
     car_servo.write(output.steer_servo())
-    car_esc.write(output.accel, output.brake)
+    # Envoi ESC (vitesse fixe — ne dépend pas des lignes détectées)
+    car_esc.write(duty_cycle, 0.0)
+
     return output
 
 
 def create_simple_sensors(dist_readings, current_speed):
-    """
-    Helper function to create a sensors object for RC car.
-
-    Args:
-        dist_readings: list of distance sensor readings (e.g., [left, center, right])
-        current_speed: current speed estimate in m/s or similar units
-
-    Returns:
-        agent.sensors object
-    """
     return agent.sensors(
         dist=dist_readings,
         x_speed=current_speed,
@@ -157,12 +121,6 @@ def create_simple_sensors(dist_readings, current_speed):
 
 
 def create_simple_state():
-    """
-    Helper function to create a state object for RC car.
-
-    Returns:
-        agent.state object with default values
-    """
     return agent.state(
         friction=1.0,
         danger_zones=[],

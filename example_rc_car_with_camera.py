@@ -25,7 +25,6 @@ def load_config(config_path='configs/base_heuristic.yaml'):
 
 
 def main():
-    print("ROBOCOUILLE")
     print("Initializing RC car control system...")
 
     values = load_config()
@@ -58,7 +57,13 @@ def main():
 
     vision.start_race_timer()
 
-    print("\nControl loop started. Ctrl+C to stop.\n")
+    # --- Vitesse fixe ---
+    # L'algo de vitesse original freinait en voyant les lignes blanches.
+    # On fixe un duty cycle constant et on ajuste à la main par paliers.
+    # Commence à 0.15 (15%) et monte de 0.05 en 0.05 selon le comportement.
+    DUTY_CYCLE = 0.15
+
+    print(f"\nControl loop started. Duty cycle: {DUTY_CYCLE:.0%}. Ctrl+C to stop.\n")
 
     loop_count = 0
     start_time = time.time()
@@ -77,7 +82,8 @@ def main():
             lane_offset   = result['center_offset']
 
             sensors = create_simple_sensors(dist_readings, current_speed)
-            output  = main_loop(sensors, state, values, car_esc, car_servo, mlp_model=None)
+            output  = main_loop(sensors, state, values, car_esc, car_servo,
+                                duty_cycle=DUTY_CYCLE, mlp_model=None)
 
             # Correction direction via center_offset caméra
             if abs(lane_offset) > 0.1:
@@ -93,7 +99,7 @@ def main():
                       f"Speed: {current_speed:5.2f} m/s | "
                       f"Steer: {output.steer:+5.2f} | "
                       f"Offset: {lane_offset:+5.2f} | "
-                      f"Accel: {output.accel:4.2f} | "
+                      f"Duty: {DUTY_CYCLE:.0%} | "
                       f"Hz: {hz:4.1f}")
 
             time.sleep(values.dt)
