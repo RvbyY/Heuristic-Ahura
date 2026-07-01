@@ -198,6 +198,7 @@ def compute_target_speed(dist0, estimated_turn, friction, values, lambda2_adjust
     target_speed = (ratio ** lambda_val) * (values.max_speed - values.min_speed) + values.min_speed
     return target_speed
 
+
 def speed_to_pedal(x_speed, target_speed):
     """Convert target speed to accel/brake pedals"""
     b = 1.0
