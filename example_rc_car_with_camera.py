@@ -1,20 +1,17 @@
 #!/usr/bin/env python3
 """
-Example script showing how to use the adapted agent.py with RC car hardware and camera vision.
+RC car control loop — OAK-D Lite + VESC
 
 Requirements:
-- OAK-D Lite camera via USB-C (USB3 port)
-- depthai : pip3 install depthai
-- pyvesc  : pip3 install pyvesc
-- pyyaml  : pip3 install pyyaml
-- VESC connected on /dev/ttyACM0
+- depthai  : pip3 install depthai
+- pyvesc   : pip3 install pyvesc
+- pyyaml   : pip3 install pyyaml
+- VESC sur /dev/ttyACM0
+- OAK-D Lite branchée en USB-C (port USB3)
 """
 
-import sys
-import os
 import time
 import yaml
-import cv2
 
 import agent
 from train import ESC, Servo, main_loop, create_simple_sensors, create_simple_state
@@ -28,101 +25,101 @@ def load_config(config_path='configs/base_heuristic.yaml'):
 
 
 def main():
-    print("Initializing RC car control system with camera vision...")
+    print("Initializing RC car control system...")
 
     values = load_config()
-    print(f"Configuration loaded: max_speed={values.max_speed}, min_speed={values.min_speed}")
+    print(f"Config loaded: max_speed={values.max_speed}, min_speed={values.min_speed}")
 
     state = create_simple_state()
-    print("State initialized")
 
-    # --- Caméra OAK-D Lite (USB-C) ---
+    # --- Caméra OAK-D Lite ---
     try:
         vision = CameraVision(width=640, height=480, fps=30, use_oak=True)
-        print("Camera vision initialized (OAK-D Lite)")
+        print("Camera OK (OAK-D Lite)")
     except Exception as e:
-        print(f"Failed to initialize camera: {e}")
-        print("Make sure the OAK-D Lite is plugged in USB-C (USB3 port)")
-        print("and depthai is installed: pip3 install depthai")
+        print(f"Camera init failed: {e}")
         return
 
-    # --- Hardware VESC ---
+    # --- VESC (servo + moteur sur le même port série) ---
     try:
         car_servo = Servo(port='/dev/ttyACM0', baudrate=115200)
-        print("Servo connected via VESC serial")
-        car_esc = ESC(port='/dev/ttyACM0', baudrate=115200)
-        print("ESC connected via VESC serial")
+        car_esc   = ESC(port='/dev/ttyACM0', baudrate=115200)
+        print("VESC OK (/dev/ttyACM0)")
     except Exception as e:
-        print(f"Failed to initialize hardware: {e}")
-        print("Make sure:")
-        print("  - VESC is connected to /dev/ttyACM0")
-        print("  - pyvesc is installed: pip3 install pyvesc")
-        print("  - Running with appropriate permissions (sudo or dialout group)")
+        print(f"VESC init failed: {e}")
         vision.cleanup()
         return
 
-    # Centrage servo + moteur à l'arrêt avant de démarrer
+    # Sécurité : servo centré, moteur à zéro avant de démarrer
     car_servo.write(0.5)
     car_esc.write(0.0, 0.0)
     time.sleep(0.5)
 
     vision.start_race_timer()
 
-    print("\nStarting control loop...")
-    print("Press Ctrl+C to stop\n")
+    print("\nControl loop started. Ctrl+C to stop.\n")
 
-    # show_debug = False : pas d'affichage cv2, on tourne en SSH sans écran.
-    # Mettre à True uniquement si un écran est branché directement sur la Jetson.
-    show_debug = False
-    loop_count = 0
-    start_time = time.time()
+    # --- Paramètres ramp-up ---
+    # La voiture part à fond au démarrage car current_speed=0 → accel=1.0.
+    # On plafonne accel progressivement sur RAMP_DURATION secondes.
+    RAMP_DURATION = 3.0   # secondes pour atteindre la vitesse max
+    MAX_ACCEL_CAP = 0.20  # accel max au démarrage (20% du duty cycle)
+
+    loop_count  = 0
+    start_time  = time.time()
 
     try:
         while True:
             frame = vision.read_frame()
             if frame is None:
-                print("Failed to read camera frame")
+                print("Camera frame lost")
                 break
 
-            result = vision.process_frame(frame, draw_debug=show_debug)
+            result = vision.process_frame(frame, draw_debug=False)
 
-            dist_readings  = result['distance_sensors']
-            current_speed  = result['speed']
-            lane_offset    = result['center_offset']
+            dist_readings = result['distance_sensors']
+            current_speed = result['speed']
+            lane_offset   = result['center_offset']
 
             sensors = create_simple_sensors(dist_readings, current_speed)
             output  = main_loop(sensors, state, values, car_esc, car_servo, mlp_model=None)
 
-            # Correction supplémentaire via center_offset (plus précis que les pseudo-distances)
+            # Ramp-up : plafonne accel pendant les premières secondes
+            elapsed = time.time() - start_time
+            if elapsed < RAMP_DURATION:
+                ramp_factor = elapsed / RAMP_DURATION        # 0.0 → 1.0
+                accel_cap   = MAX_ACCEL_CAP + ramp_factor * (1.0 - MAX_ACCEL_CAP)
+                capped_accel = min(output.accel, accel_cap)
+                car_esc.write(capped_accel, output.brake)
+
+            # Correction direction via center_offset caméra
             if abs(lane_offset) > 0.1:
                 correction      = -lane_offset * 0.3
                 corrected_steer = max(-1.0, min(1.0, output.steer + correction))
                 car_servo.write((corrected_steer + 1.0) / 2.0)
 
-            # Debug console toutes les 50 itérations (~1 seconde à 50Hz)
+            # Log console toutes les ~1 seconde
             loop_count += 1
             if loop_count % 50 == 0:
-                elapsed = time.time() - start_time
-                hz = loop_count / elapsed
-                print(f"[{loop_count:5d}] Speed: {current_speed:5.2f} m/s | "
-                      f"Pace: {result['avg_pace']:5.2f} m/s | "
+                hz = loop_count / (time.time() - start_time)
+                print(f"[{loop_count:5d}] "
+                      f"Speed: {current_speed:5.2f} m/s | "
                       f"Steer: {output.steer:+5.2f} | "
                       f"Offset: {lane_offset:+5.2f} | "
                       f"Accel: {output.accel:4.2f} | "
-                      f"Brake: {output.brake:4.2f} | "
-                      f"Hz: {hz:5.1f}")
+                      f"Hz: {hz:4.1f}")
 
             time.sleep(values.dt)
 
     except KeyboardInterrupt:
-        print("\n\nStopping...")
+        print("\nStopping...")
 
     finally:
         print("Cleaning up...")
         car_esc.cleanup()
         car_servo.cleanup()
         vision.cleanup()
-        print("RC car stopped and cleaned up")
+        print("Done.")
 
 
 if __name__ == '__main__':
