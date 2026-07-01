@@ -25,6 +25,7 @@ def load_config(config_path='configs/base_heuristic.yaml'):
 
 
 def main():
+    print("ROBOCOUILLE")
     print("Initializing RC car control system...")
 
     values = load_config()
@@ -59,7 +60,9 @@ def main():
 
     print("\nControl loop started. Ctrl+C to stop.\n")
 
-    loop_count  = 0
+    loop_count = 0
+    start_time = time.time()
+
     try:
         while True:
             frame = vision.read_frame()
